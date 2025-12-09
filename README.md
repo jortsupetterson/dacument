@@ -67,6 +67,11 @@ b.insertAt(2, "!");
 // Merge and materialize
 a.merge(b);
 a.getText(); // -> "Hi!"
+
+// Handle remote op streams
+const idx = a.applyRemoteInsert({ id: "peer:42", char: "?" });
+// Later...
+a.applyRemoteDelete({ id: "peer:42" });
 ```
 
 ### Persist and rehydrate
@@ -108,6 +113,7 @@ const restoredDoc = TextRGA.fromJSON(
 
 - `TextRGA(nodeId, localCounter?, entries?, order?, onInsert?, onDelete?)` - create a text replica; callbacks fire on local inserts/deletes.
 - `insertAt(index, char)` / `deleteAt(index)` - mutate the visible text.
+- `applyRemoteInsert({id, char})` / `applyRemoteDelete({id})` - apply explicit remote ops idempotently (useful when you stream operations instead of state).
 - `merge(other)` - union entries and deterministic order; returns `this`.
 - `getText()` - materialize current visible string.
 - `toJSON()` / `TextRGA.fromJSON(json)` - serialize/rehydrate (callbacks are not serialized).

@@ -24,10 +24,15 @@ export class TextRGA {
     onInsert = undefined,
     onDelete = undefined
   ) {
+    // Node identifier used for generating local ids
     this.localNodeId = localNodeId;
+    // Monotonic per-node counter for id allocation
     this.localCounter = localCounter;
-    this.entries = { ...entries }; // id -> { char, deleted }
-    this.order = order.slice(); // array of ids, for fast traversal
+    // Map: id -> { char, deleted }
+    this.entries = { ...entries };
+    // Total order of ids (including tombstoned entries)
+    this.order = order.slice();
+    // Optional callbacks invoked on local/remote inserts and deletes
     this.onInsert = onInsert || null;
     this.onDelete = onDelete || null;
   }
@@ -42,8 +47,29 @@ export class TextRGA {
   }
 
   /**
+   * Compute the visible character index for a given id.
+   * Returns -1 if the id is not present or is tombstoned.
+   * @param {string} targetId
+   * @returns {number}
+   */
+  #visibleIndexOf(targetId) {
+    let visibleIndex = 0;
+    for (const id of this.order) {
+      const entry = this.entries[id];
+      if (!entry) continue;
+      if (id === targetId) {
+        return entry.deleted ? -1 : visibleIndex;
+      }
+      if (!entry.deleted) {
+        visibleIndex += 1;
+      }
+    }
+    return -1;
+  }
+
+  /**
    * Insert a single character at logical index among visible characters.
-   * @param {number} index 0-based index over *visible* characters
+   * @param {number} index 0-based index over visible characters
    * @param {string} char single-character string
    * @returns {string} id of the inserted character
    */
@@ -61,10 +87,10 @@ export class TextRGA {
       (entryId) => !this.entries[entryId]?.deleted
     );
 
-    // Clamp index
+    // Clamp index into the visible range
     const clampedIndex = Math.max(0, Math.min(index, visibleIds.length));
 
-    // We insert relative to visible indices, but maintain full order[]
+    // Insert relative to visible indices, while preserving the full order[]
     const newOrder = [];
     let visiblePos = 0;
 
@@ -79,7 +105,7 @@ export class TextRGA {
       newOrder.push(entryId);
     }
 
-    // If we insert at the end, we may not have pushed id above
+    // If we insert at the end, we may not have pushed id in the loop
     if (clampedIndex === visibleIds.length && !newOrder.includes(id)) {
       newOrder.push(id);
     }
@@ -95,8 +121,9 @@ export class TextRGA {
   }
 
   /**
-   * Tombstone character at logical index among visible characters.
-   * @param {number} index 0-based index over *visible* characters
+   * Tombstone the character at logical index among visible characters.
+   * No-op if index is out of range.
+   * @param {number} index 0-based index over visible characters
    */
   deleteAt(index) {
     const visibleIds = this.order.filter(
@@ -117,6 +144,59 @@ export class TextRGA {
   }
 
   /**
+   * Apply a remote insert given an explicit id+char pair.
+   * Idempotent: if the id already exists, nothing is appended twice.
+   * @param {{ id: string, char: string }} remote
+   * @returns {number} visible index of the inserted character (or -1 if not visible)
+   */
+  applyRemoteInsert({ id, char }) {
+    // If we already know this id, just report its visible index
+    if (this.entries[id]) {
+      return this.#visibleIndexOf(id);
+    }
+
+    // Register the new character
+    this.entries[id] = { char, deleted: false };
+
+    // Ensure id is present in the order and keep ordering deterministic
+    if (!this.order.includes(id)) {
+      this.order.push(id);
+      this.order.sort();
+    }
+
+    const index = this.#visibleIndexOf(id);
+    if (index >= 0 && this.onInsert) {
+      this.onInsert({ index, id, char });
+    }
+    return index;
+  }
+
+  /**
+   * Apply a remote delete given an explicit id.
+   * Idempotent: if the id is already tombstoned, this is a no-op.
+   * @param {{ id: string }} remote
+   * @returns {number} visible index before deletion (or -1 if not visible)
+   */
+  applyRemoteDelete({ id }) {
+    const entry = this.entries[id];
+    if (!entry) return -1;
+
+    const index = this.#visibleIndexOf(id);
+
+    // Already deleted -> do not fire delete callback again
+    if (entry.deleted) {
+      return index;
+    }
+
+    entry.deleted = true;
+
+    if (index >= 0 && this.onDelete) {
+      this.onDelete({ index, id });
+    }
+    return index;
+  }
+
+  /**
    * Merge another TextRGA into this one (idempotent, commutative, associative).
    * @param {TextRGA} other
    * @returns {TextRGA} this
@@ -128,7 +208,7 @@ export class TextRGA {
       const local = this.entries[id];
 
       if (!local) {
-        // New character from other replica
+        // New character from the other replica
         this.entries[id] = { char: remote.char, deleted: !!remote.deleted };
       } else {
         // Same character: OR the deleted flags
@@ -142,17 +222,16 @@ export class TextRGA {
       ...other.order,
       ...Object.keys(this.entries),
     ]);
-    this.order = Array.from(idSet).sort(); // sort by id string -> deterministic
+    this.order = Array.from(idSet).sort();
 
-    // Local counter should at least be as large as any local id we've generated;
-    // we do NOT try to "merge" counters globally here.
+    // Keep local counter at least as large as the other replica's counter
     this.localCounter = Math.max(this.localCounter, other.localCounter || 0);
 
     return this;
   }
 
   /**
-   * Materialize current visible text.
+   * Materialize the current visible text as a plain string.
    * @returns {string}
    */
   getText() {
@@ -167,8 +246,9 @@ export class TextRGA {
   }
 
   /**
-   * JSON storage/transport representation (IDB, network).
-   * (callbacks are intentionally not serialized)
+   * JSON representation for storage/transport (e.g. IndexedDB, network).
+   * Callbacks are intentionally not serialized.
+   * @returns {{localNodeId:string,localCounter:number,entries:{[id:string]:{char:string,deleted:boolean}},order:string[]}}
    */
   toJSON() {
     return {
@@ -180,7 +260,8 @@ export class TextRGA {
   }
 
   /**
-   * Rehydrate from JSON (callbacks must be wired manually afterwards).
+   * Rehydrate from JSON into a live TextRGA instance.
+   * Callbacks must be wired manually after construction.
    * @param {{localNodeId: string, localCounter?: number, entries?: {[id: string]: {char: string, deleted: boolean}}, order?: string[]}} json
    * @returns {TextRGA}
    */
@@ -193,3 +274,5 @@ export class TextRGA {
     );
   }
 }
+
+

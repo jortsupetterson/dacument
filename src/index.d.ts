@@ -76,11 +76,13 @@ export class TextRGA {
     localCounter?: number,
     entries?: Record<string, TextRGAEntry>,
     order?: string[],
-    onInsert?: (info: TextRGAInsertInfo) => void | null,
-    onDelete?: (info: TextRGADeleteInfo) => void | null
+    onInsert?: ((info: TextRGAInsertInfo) => void) | null,
+    onDelete?: ((info: TextRGADeleteInfo) => void) | null
   );
   insertAt(index: number, char: string): string;
   deleteAt(index: number): void;
+  applyRemoteInsert(remote: { id: string; char: string }): number;
+  applyRemoteDelete(remote: { id: string }): number;
   merge(other: TextRGA): this;
   getText(): string;
   toJSON(): Required<TextRGAJSON>;
