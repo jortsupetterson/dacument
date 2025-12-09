@@ -1,0 +1,30 @@
+{
+  "name": "simple-crdts",
+  "version": "1.0.0",
+  "description": "Tiny CRDT helpers: Last-Writer-Wins register and PN-Counter you can merge across offline/online nodes.",
+  "keywords": [
+    "crdt",
+    "lww",
+    "last-writer-wins",
+    "pn-counter",
+    "distributed-systems",
+    "conflict-free"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.js",
+      "types": "./src/index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false
+}
