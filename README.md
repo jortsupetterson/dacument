@@ -1,5 +1,9 @@
 # simple-crdts
 
+/// THESE ARE MEANT FOR VALUES/DOCUMENTS USERS CAN WRITE DIRECTLY OR AS A SIDE-EFFECT, THESE ARE MEANING THE MAIN GOAL IS TO SERVE INTENTION AS MUCH AS POSSIBLE.
+
+/// THESE ARE NOT MEANT FOR SYSTEM ONLY CONFLICT RESOLVING THAT USERS ACTION DO NOT AFFECT IN ANY SHAPE OR FORM, IF THAT IS WHAT YOU NEED CHECK SOMETHING ELSE eg. <INSERT INDUSTRY STANDARD CRDT NPM PACKAGE URL HERE>
+
 Lightweight, zero-dependency CRDT primitives you can drop into offline-first or multi-node apps. Ships with a Last-Writer-Wins register, a PN-Counter, and a Text RGA (text CRDT) plus ready-to-use JSON serialization and TypeScript typings.
 
 ## Features
