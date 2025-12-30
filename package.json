@@ -28,5 +28,8 @@
     "README.md",
     "LICENSE"
   ],
-  "sideEffects": false
+  "sideEffects": false,
+  "dependencies": {
+    "zod": "^3.24.1"
+  }
 }
