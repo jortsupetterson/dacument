@@ -1,0 +1,34 @@
+import { DAGNode } from "../DAGNode/class.js";
+export declare class CRArray<T> {
+    private readonly nodes;
+    private readonly nodeById;
+    private readonly listeners;
+    constructor(snapshot?: readonly DAGNode<T>[]);
+    get length(): number;
+    onChange(listener: (nodes: readonly DAGNode<T>[]) => void): () => void;
+    snapshot(): DAGNode<T>[];
+    push(...items: T[]): number;
+    unshift(...items: T[]): number;
+    pop(): T | undefined;
+    shift(): T | undefined;
+    at(index: number): T | undefined;
+    setAt(index: number, value: T): this;
+    slice(start?: number, end?: number): T[];
+    includes(value: T): boolean;
+    indexOf(value: T): number;
+    find(predicate: (value: T, index: number, array: T[]) => boolean, thisArg?: unknown): T | undefined;
+    findIndex(predicate: (value: T, index: number, array: T[]) => boolean, thisArg?: unknown): number;
+    forEach(callback: (value: T, index: number, array: T[]) => void, thisArg?: unknown): void;
+    map<U>(callback: (value: T, index: number, array: T[]) => U, thisArg?: unknown): U[];
+    filter(predicate: (value: T, index: number, array: T[]) => boolean, thisArg?: unknown): T[];
+    reduce<U>(reducer: (prev: U, curr: T, index: number, array: T[]) => U, initialValue: U): U;
+    every(predicate: (value: T, index: number, array: T[]) => boolean, thisArg?: unknown): boolean;
+    some(predicate: (value: T, index: number, array: T[]) => boolean, thisArg?: unknown): boolean;
+    [Symbol.iterator](): Iterator<T>;
+    merge(remoteSnapshot: DAGNode<T>[] | DAGNode<T>): DAGNode<T>[];
+    sort(compareFn?: (a: DAGNode<T>, b: DAGNode<T>) => number): this;
+    private alive;
+    private lastAliveId;
+    private afterIdForAliveInsertAt;
+    private emit;
+}

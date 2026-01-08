@@ -1,1 +1,0 @@
-Multi writer string register

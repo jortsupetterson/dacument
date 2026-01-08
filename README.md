@@ -1,34 +1,39 @@
-`.car` stands for **Conflict Aware Replica**.
+# CRDT Building Blocks
 
-It is a file format that extends JSON, paired with a specified handler named `CARHandler` that can be implemented in any programming language.
+This folder contains conflict-free data types with a consistent, minimal API
+designed for easy syncing and patch forwarding.
 
-**Status:** Draft / Work in Progress  
-**Maturity:** Experimental  
-**Stability:** Breaking changes expected
+## Common API
 
-**MIME type:** `application/car+json`
+Every CR class exposes the same three CRDT methods:
 
-## Properties
+- `onChange(listener): () => void` receives an array of accepted nodes.
+- `snapshot(): Node[]` returns a copy of all nodes (or `[winner]` for registers).
+- `merge(snapshotOrNode): Node[]` accepts a snapshot array or single node patch.
 
-- Embedded access control
-- Cryptographically verifiable trust model
-- Conflict-aware merge and patch semantics
-- User experience and user-centric design
+## Classes
 
-## Goal
+- `CRArray` - array-like RGA with Proxy index access.
+- `CRText` - text RGA built on DAG nodes.
+- `CRMap` - observed-remove map (OR-Map).
+- `CRSet` - observed-remove set (OR-Set).
+- `CRRecord` - observed-remove record (Proxy object).
+- `CRRegister` - last-writer-wins register with HLC stamps.
 
-The goal of this project is to standardize an application state model that prioritizes **user intention** and provides a **user interface–compatible programming interface**.
+## Patch flow
 
-The model is designed to make it straightforward to establish a reactive connection between the state stored in a `.car` file and the state produced by user interface components. Changes performed by an actor with valid access—at the moment they perceive the change to occur on their own machine—must be preserved during merges. This behavior is enforced through hierarchical access control rules and backed by a cryptographically verifiable trust model.
+Forward changes by relaying `onChange` patches, or ship full snapshots when a
+replica joins:
 
-## Rationale
+```js
+const stop = doc.onChange((patches) => {
+  peer.merge(structuredClone(patches));
+});
 
-In real production systems controlled by multiple users and constantly changing conditions, it is impossible to eliminate conflicts from the user’s perspective. Instead of attempting to pretend conflicts do not exist, `.car` is designed to be explicitly aware of production system realities and to handle conflicts in a standardized, secure, and efficient way.
+peer.merge(structuredClone(doc.snapshot()));
+```
 
-## What this is not
+## Tests and benchmarks
 
-This is not a mathematically proven model to ensure conflict free backend systems.
-
-## What this is
-
-This is a frontend optimized conflict aware application state model that co exists with CRDT backendsystems
+- `npm test` runs the node:test suite.
+- `npm run bench` and `npm run bench:*` run per-type benchmarks.
