@@ -8,11 +8,11 @@ register fields and safe CRDT views for all other field types.
 ## Install
 
 ```sh
-npm install zeyra
+npm install dacument
 # or
-pnpm add zeyra
+pnpm add dacument
 # or
-yarn add zeyra
+yarn add dacument
 ```
 
 ## Quick start
