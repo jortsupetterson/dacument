@@ -131,6 +131,7 @@ export declare class Dacument<S extends SchemaDefinition> {
     private emitError;
     private canWriteField;
     private canWriteAcl;
+    private canWriteAclTarget;
     private assertWritable;
     private assertValueType;
     private assertValueArray;

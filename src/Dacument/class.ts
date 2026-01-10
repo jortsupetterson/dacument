@@ -841,7 +841,12 @@ export class Dacument<S extends SchemaDefinition> {
           if (
             roleAt === signerRole &&
             isAclPatch(payload.patch) &&
-            this.canWriteAcl(signerRole, payload.patch.role)
+            this.canWriteAclTarget(
+              signerRole,
+              payload.patch.role,
+              payload.patch.target,
+              payload.stamp
+            )
           )
             allowed = true;
         }
@@ -1725,7 +1730,10 @@ export class Dacument<S extends SchemaDefinition> {
   private applyAclPayload(payload: OpPayload, signerRole: Role): boolean {
     if (!isAclPatch(payload.patch)) return false;
     const patch = payload.patch;
-    if (!this.canWriteAcl(signerRole, patch.role)) return false;
+    if (
+      !this.canWriteAclTarget(signerRole, patch.role, patch.target, payload.stamp)
+    )
+      return false;
 
     const assignment: AclAssignment = {
       id: patch.id,
@@ -2243,7 +2251,7 @@ export class Dacument<S extends SchemaDefinition> {
   private setRole(actorId: string, role: Role): void {
     const stamp = this.clock.next();
     const signerRole = this.aclLog.roleAt(this.actorId, stamp);
-    if (!this.canWriteAcl(signerRole, role))
+    if (!this.canWriteAclTarget(signerRole, role, actorId, stamp))
       throw new Error(`Dacument: role '${signerRole}' cannot grant '${role}'`);
     const assignmentId = uuidv7();
 
@@ -2349,6 +2357,20 @@ export class Dacument<S extends SchemaDefinition> {
     if (role === "manager")
       return targetRole === "editor" || targetRole === "viewer" || targetRole === "revoked";
     return false;
+  }
+
+  private canWriteAclTarget(
+    role: Role,
+    targetRole: Role,
+    targetActorId: string,
+    stamp: AclAssignment["stamp"]
+  ): boolean {
+    if (!this.canWriteAcl(role, targetRole)) return false;
+    if (role === "manager") {
+      const targetRoleAt = this.aclLog.roleAt(targetActorId, stamp);
+      if (targetRoleAt === "owner") return false;
+    }
+    return true;
   }
 
   private assertWritable(field: string, role: Role): void {

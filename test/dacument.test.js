@@ -329,6 +329,34 @@ test("managers cannot grant manager role", async () => {
   assert.equal(doc.acl.getRole(targetId), "revoked");
 });
 
+test("managers cannot revoke owner", async () => {
+  const { doc, roleKeys } = await createOwnerDoc();
+  const ownerOps = [];
+  doc.addEventListener("change", (event) => ownerOps.push(...event.ops));
+
+  const managerId = generateNonce();
+  doc.acl.setRole(managerId, "manager");
+  await doc.flush();
+  await doc.merge(ownerOps);
+  ownerOps.length = 0;
+
+  const stamp = makeStamp(managerId, Date.now());
+  const token = await signAclOp({
+    roleKey: roleKeys.manager.privateKey,
+    signerRole: "manager",
+    iss: managerId,
+    docId: doc.docId,
+    schemaId: doc.schemaId,
+    target: ACTOR_ID,
+    role: "revoked",
+    stamp,
+  });
+
+  const result = await doc.merge([{ token }]);
+  assert.equal(result.accepted.length, 0);
+  assert.equal(doc.acl.getRole(ACTOR_ID), "owner");
+});
+
 test("invalid signature is rejected", async () => {
   const { doc, snapshot } = await createOwnerDoc();
   const ops = [];

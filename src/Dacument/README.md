@@ -54,6 +54,7 @@ await doc.flush();
 
 Revoked actors read initial values instead of the live document state.
 Revoked actors cannot call `snapshot()`.
+Managers cannot change owner actors.
 `merge` events report minimal operation params like `insertAt`, `deleteAt`,
 `push`, `pop`, `set`, and `add`.
 

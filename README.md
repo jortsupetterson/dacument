@@ -79,7 +79,7 @@ Map keys must be JSON-compatible values (`string`, `number`, `boolean`, `null`, 
 Roles are evaluated at the op stamp time (HLC).
 
 - Owner: full control (including ownership transfer).
-- Manager: can grant editor/viewer/revoked roles.
+- Manager: can grant editor/viewer/revoked roles (cannot change owner).
 - Editor: can write non-ACL fields.
 - Viewer: read-only.
 - Revoked: reads are masked to initial values; writes are rejected.
@@ -163,6 +163,19 @@ If any non-revoked actor is offline and never acks, tombstones are kept.
 
 Eventual consistency is achieved when all signed ops are delivered to all
 replicas. Dacument does not provide transport; use `change` events to wire it up.
+
+## Possible threats and how to handle
+
+- Key compromise: no rotation exists, so migrate by snapshotting into a new
+  dacument with fresh keys.
+- Shared role keys: attribution is role-level, not per-user; treat roles as
+  trust groups and log merge events if you need auditing.
+- Insider DoS/flooding: rate-limit ops, cap payload sizes, and monitor merge
+  errors at the application layer.
+- Withholding/delivery delays: eventual consistency depends on ops arriving;
+  use reliable transport and resync via snapshot when needed.
+- No built-in encryption: use TLS or E2E encryption and treat snapshots as
+  sensitive data.
 
 ## Compatibility
 

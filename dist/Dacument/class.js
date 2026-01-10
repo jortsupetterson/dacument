@@ -671,7 +671,7 @@ export class Dacument {
                     const roleAt = this.aclLog.roleAt(payload.iss, payload.stamp);
                     if (roleAt === signerRole &&
                         isAclPatch(payload.patch) &&
-                        this.canWriteAcl(signerRole, payload.patch.role))
+                        this.canWriteAclTarget(signerRole, payload.patch.role, payload.patch.target, payload.stamp))
                         allowed = true;
                 }
             }
@@ -1448,7 +1448,7 @@ export class Dacument {
         if (!isAclPatch(payload.patch))
             return false;
         const patch = payload.patch;
-        if (!this.canWriteAcl(signerRole, patch.role))
+        if (!this.canWriteAclTarget(signerRole, patch.role, patch.target, payload.stamp))
             return false;
         const assignment = {
             id: patch.id,
@@ -1871,7 +1871,7 @@ export class Dacument {
     setRole(actorId, role) {
         const stamp = this.clock.next();
         const signerRole = this.aclLog.roleAt(this.actorId, stamp);
-        if (!this.canWriteAcl(signerRole, role))
+        if (!this.canWriteAclTarget(signerRole, role, actorId, stamp))
             throw new Error(`Dacument: role '${signerRole}' cannot grant '${role}'`);
         const assignmentId = uuidv7();
         this.queueLocalOp({
@@ -1958,6 +1958,16 @@ export class Dacument {
         if (role === "manager")
             return targetRole === "editor" || targetRole === "viewer" || targetRole === "revoked";
         return false;
+    }
+    canWriteAclTarget(role, targetRole, targetActorId, stamp) {
+        if (!this.canWriteAcl(role, targetRole))
+            return false;
+        if (role === "manager") {
+            const targetRoleAt = this.aclLog.roleAt(targetActorId, stamp);
+            if (targetRoleAt === "owner")
+                return false;
+        }
+        return true;
     }
     assertWritable(field, role) {
         if (!this.canWriteField(role))
