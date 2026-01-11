@@ -9,7 +9,7 @@ import { CRSet } from "../CRSet/class.js";
 import { CRText } from "../CRText/class.js";
 import { AclLog } from "./acl.js";
 import { HLC, compareHLC } from "./clock.js";
-import { decodeToken, encodeToken, signToken, validateActorKeyPair, verifyDetached, verifyToken, } from "./crypto.js";
+import { decodeToken, signToken, validateActorKeyPair, verifyDetached, verifyToken, } from "./crypto.js";
 import { array, map, record, register, set, text, isJsValue, isValueOfType, schemaIdInput, } from "./types.js";
 const TOKEN_TYP = "DACOP";
 function nowSeconds() {
@@ -169,15 +169,34 @@ function toPublicRoleKeys(roleKeys) {
 export class Dacument {
     static actorInfo;
     static actorSigner;
+    static actorInfoPrevious;
     static async setActorInfo(info) {
-        if (Dacument.actorInfo)
-            return;
+        const existing = Dacument.actorInfo;
+        if (existing) {
+            if (info.id !== existing.id)
+                throw new Error("Dacument.setActorInfo: actor id already set");
+            const samePrivate = jwkEquals(info.privateKeyJwk, existing.privateKeyJwk);
+            const samePublic = jwkEquals(info.publicKeyJwk, existing.publicKeyJwk);
+            if (samePrivate && samePublic)
+                return;
+            if (!info.currentPrivateKeyJwk || !info.currentPublicKeyJwk)
+                throw new Error("Dacument.setActorInfo: current keys required to update actor info");
+            if (!jwkEquals(info.currentPrivateKeyJwk, existing.privateKeyJwk) ||
+                !jwkEquals(info.currentPublicKeyJwk, existing.publicKeyJwk))
+                throw new Error("Dacument.setActorInfo: current keys do not match existing actor info");
+        }
         if (!Dacument.isValidActorId(info.id))
             throw new Error("Dacument.setActorInfo: id must be 256-bit base64url");
         Dacument.assertActorPrivateKey(info.privateKeyJwk);
         Dacument.assertActorPublicKey(info.publicKeyJwk);
         await validateActorKeyPair(info.privateKeyJwk, info.publicKeyJwk);
-        Dacument.actorInfo = info;
+        if (existing)
+            Dacument.actorInfoPrevious = existing;
+        Dacument.actorInfo = {
+            id: info.id,
+            privateKeyJwk: info.privateKeyJwk,
+            publicKeyJwk: info.publicKeyJwk,
+        };
         Dacument.actorSigner = new SigningAgent(info.privateKeyJwk);
     }
     static requireActorInfo() {
@@ -190,13 +209,30 @@ export class Dacument {
             throw new Error("Dacument: actor info not set; call Dacument.setActorInfo()");
         return Dacument.actorSigner;
     }
-    static async signActorToken(token) {
-        const signer = Dacument.requireActorSigner();
+    static async signActorToken(token, privateKeyJwk) {
+        const current = Dacument.actorInfo;
+        const signer = privateKeyJwk &&
+            current &&
+            jwkEquals(privateKeyJwk, current.privateKeyJwk)
+            ? Dacument.requireActorSigner()
+            : privateKeyJwk
+                ? new SigningAgent(privateKeyJwk)
+                : Dacument.requireActorSigner();
         const signature = await signer.sign(Bytes.fromString(token));
         return Bytes.toBase64UrlString(signature);
     }
     static isValidActorId(actorId) {
         return isValidNonceId(actorId);
+    }
+    static actorInfoForPublicKey(publicKeyJwk) {
+        if (!publicKeyJwk)
+            return null;
+        if (Dacument.actorInfo && jwkEquals(publicKeyJwk, Dacument.actorInfo.publicKeyJwk))
+            return Dacument.actorInfo;
+        if (Dacument.actorInfoPrevious &&
+            jwkEquals(publicKeyJwk, Dacument.actorInfoPrevious.publicKeyJwk))
+            return Dacument.actorInfoPrevious;
+        return null;
     }
     static assertActorKeyJwk(jwk, label) {
         if (!jwk || typeof jwk !== "object")
@@ -805,33 +841,32 @@ export class Dacument {
                 rejected++;
                 continue;
             }
-            const isUnsignedAck = decoded.header.alg === "none" &&
-                payload.kind === "ack" &&
-                decoded.header.typ === TOKEN_TYP;
-            if (decoded.header.alg === "none" && !isUnsignedAck) {
-                rejected++;
-                continue;
-            }
-            if (payload.kind === "ack" && decoded.header.alg !== "none") {
+            if (decoded.header.alg === "none") {
                 rejected++;
                 continue;
             }
             let stored = this.verifiedOps.get(token);
             if (!stored) {
-                if (isUnsignedAck) {
-                    stored = { payload, signerRole: null };
+                const signerKind = parseSignerKind(decoded.header.kid, payload.iss);
+                if (!signerKind) {
+                    rejected++;
+                    continue;
                 }
-                else {
-                    const signerKind = parseSignerKind(decoded.header.kid, payload.iss);
-                    if (!signerKind) {
-                        rejected++;
-                        continue;
-                    }
-                    if (signerKind === "actor") {
-                        if (payload.kind !== "acl.set") {
+                if (signerKind === "actor") {
+                    if (payload.kind === "ack") {
+                        const publicKey = this.aclLog.publicKeyAt(payload.iss, payload.stamp);
+                        if (!publicKey) {
                             rejected++;
                             continue;
                         }
+                        const verified = await verifyToken(publicKey, token, TOKEN_TYP);
+                        if (!verified) {
+                            rejected++;
+                            continue;
+                        }
+                        stored = { payload, signerRole: "actor" };
+                    }
+                    else if (payload.kind === "acl.set") {
                         const patch = isAclPatch(payload.patch) ? payload.patch : null;
                         if (!patch || patch.target !== payload.iss) {
                             rejected++;
@@ -844,12 +879,6 @@ export class Dacument {
                             continue;
                         }
                         const existingKey = this.aclLog.publicKeyAt(payload.iss, payload.stamp);
-                        if (existingKey &&
-                            patch.publicKeyJwk &&
-                            !jwkEquals(existingKey, patch.publicKeyJwk)) {
-                            rejected++;
-                            continue;
-                        }
                         const publicKey = existingKey ?? patch.publicKeyJwk;
                         if (!publicKey) {
                             rejected++;
@@ -863,14 +892,22 @@ export class Dacument {
                         stored = { payload, signerRole: "actor" };
                     }
                     else {
-                        const publicKey = this.roleKeys[signerKind];
-                        const verified = await verifyToken(publicKey, token, TOKEN_TYP);
-                        if (!verified) {
-                            rejected++;
-                            continue;
-                        }
-                        stored = { payload, signerRole: signerKind };
+                        rejected++;
+                        continue;
                     }
+                }
+                else {
+                    if (payload.kind === "ack") {
+                        rejected++;
+                        continue;
+                    }
+                    const publicKey = this.roleKeys[signerKind];
+                    const verified = await verifyToken(publicKey, token, TOKEN_TYP);
+                    if (!verified) {
+                        rejected++;
+                        continue;
+                    }
+                    stored = { payload, signerRole: signerKind };
                 }
                 this.verifiedOps.set(token, stored);
                 if (!this.opTokens.has(token)) {
@@ -982,18 +1019,18 @@ export class Dacument {
                 }
                 else {
                     const roleAt = this.roleAt(payload.iss, payload.stamp);
-                    const isSelfRevoke = patch.target === payload.iss && patch.role === "revoked";
+                    const isSelf = patch.target === payload.iss;
+                    const isSelfRevoke = isSelf && patch.role === "revoked";
                     const targetKey = this.aclLog.publicKeyAt(patch.target, payload.stamp);
-                    const isSelfKeyUpdate = patch.target === payload.iss &&
+                    const keyMismatch = Boolean(patch.publicKeyJwk) &&
+                        Boolean(targetKey) &&
+                        !jwkEquals(targetKey, patch.publicKeyJwk);
+                    const isSelfKeyUpdate = isSelf &&
                         patch.publicKeyJwk &&
                         patch.role === roleAt &&
-                        roleAt !== "revoked" &&
-                        (!targetKey || jwkEquals(targetKey, patch.publicKeyJwk));
-                    if (patch.publicKeyJwk &&
-                        targetKey &&
-                        !jwkEquals(targetKey, patch.publicKeyJwk)) {
+                        roleAt !== "revoked";
+                    if (keyMismatch && signerRole !== "actor")
                         continue;
-                    }
                     if (isSelfRevoke) {
                         if (signerRole === "actor") {
                             allowed = true;
@@ -1010,7 +1047,7 @@ export class Dacument {
                         if (this.canWriteAclTarget(signerRole, patch.role, patch.target, payload.stamp)) {
                             allowed = true;
                         }
-                        else if (isSelfKeyUpdate) {
+                        else if (isSelfKeyUpdate && !keyMismatch) {
                             allowed = true;
                         }
                     }
@@ -1021,7 +1058,7 @@ export class Dacument {
                 if (payload.kind === "ack") {
                     if (roleAt === "revoked")
                         continue;
-                    if (signerRole !== null)
+                    if (signerRole !== "actor")
                         continue;
                     allowed = true;
                 }
@@ -1065,8 +1102,11 @@ export class Dacument {
             return;
         const entry = this.aclLog.currentEntry(this.actorId);
         if (entry?.publicKeyJwk) {
-            this.actorKeyPublishPending = false;
-            return;
+            const actorInfo = Dacument.requireActorInfo();
+            if (jwkEquals(entry.publicKeyJwk, actorInfo.publicKeyJwk)) {
+                this.actorKeyPublishPending = false;
+                return;
+            }
         }
         if (this.actorKeyPublishPending)
             return;
@@ -1075,6 +1115,13 @@ export class Dacument {
         if (!entry)
             return;
         const actorInfo = Dacument.requireActorInfo();
+        const signerInfo = entry.publicKeyJwk
+            ? Dacument.actorInfoForPublicKey(entry.publicKeyJwk)
+            : actorInfo;
+        if (entry.publicKeyJwk && !signerInfo) {
+            this.emitError(new Error("Dacument: actor key mismatch; update requires current key material"));
+            return;
+        }
         const stamp = this.clock.next();
         const payload = {
             iss: this.actorId,
@@ -1091,9 +1138,19 @@ export class Dacument {
             },
         };
         this.actorKeyPublishPending = true;
-        this.queueActorOp(payload, () => {
-            this.actorKeyPublishPending = false;
+        this.queueActorOp(payload, {
+            signer: (signerInfo ?? actorInfo).privateKeyJwk,
+            onError: () => {
+                this.actorKeyPublishPending = false;
+            },
         });
+    }
+    actorSignatureKey() {
+        const entry = this.aclLog.currentEntry(this.actorId);
+        if (!entry?.publicKeyJwk)
+            return null;
+        const actorInfo = Dacument.actorInfoForPublicKey(entry.publicKeyJwk);
+        return actorInfo?.privateKeyJwk ?? null;
     }
     ack() {
         this.assertNotReset();
@@ -1101,9 +1158,17 @@ export class Dacument {
         const role = this.roleAt(this.actorId, stamp);
         if (role === "revoked")
             throw new Error("Dacument: revoked actors cannot acknowledge");
+        const entry = this.aclLog.currentEntry(this.actorId);
+        if (!entry?.publicKeyJwk)
+            return;
+        const actorInfo = Dacument.actorInfoForPublicKey(entry.publicKeyJwk);
+        if (!actorInfo) {
+            this.emitError(new Error("Dacument: actor key not available to sign ack"));
+            return;
+        }
         const seen = this.clock.current;
         this.ackByActor.set(this.actorId, seen);
-        this.queueLocalOp({
+        this.queueActorOp({
             iss: this.actorId,
             sub: this.docId,
             iat: nowSeconds(),
@@ -1111,7 +1176,7 @@ export class Dacument {
             kind: "ack",
             schema: this.schemaId,
             patch: { seen },
-        }, role);
+        }, { signer: actorInfo.privateKeyJwk });
     }
     scheduleAck() {
         if (this.ackScheduled)
@@ -1781,10 +1846,7 @@ export class Dacument {
     queueLocalOp(payload, role) {
         this.assertNotReset();
         if (payload.kind === "ack") {
-            const header = { alg: "none", typ: TOKEN_TYP };
-            const token = encodeToken(header, payload);
-            this.emitEvent("change", { type: "change", ops: [{ token }] });
-            return;
+            throw new Error("Dacument: ack ops must be actor-signed");
         }
         if (!roleNeedsKey(role))
             throw new Error(`Dacument: role '${role}' cannot sign ops`);
@@ -1793,30 +1855,34 @@ export class Dacument {
         const header = { alg: "ES256", typ: TOKEN_TYP, kid: `${payload.iss}:${role}` };
         const promise = signToken(this.roleKey, header, payload)
             .then(async (token) => {
-            const actorSig = await Dacument.signActorToken(token);
-            const op = { token, actorSig };
+            const actorSigKey = this.actorSignatureKey();
+            const actorSig = actorSigKey
+                ? await Dacument.signActorToken(token, actorSigKey)
+                : undefined;
+            const op = actorSig ? { token, actorSig } : { token };
             this.emitEvent("change", { type: "change", ops: [op] });
         })
             .catch((error) => this.emitError(error instanceof Error ? error : new Error(String(error))));
         this.pending.add(promise);
         promise.finally(() => this.pending.delete(promise));
     }
-    queueActorOp(payload, onError) {
+    queueActorOp(payload, options) {
         this.assertNotReset();
         const actorInfo = Dacument.requireActorInfo();
+        const signingKey = options?.signer ?? actorInfo.privateKeyJwk;
         const header = {
             alg: "ES256",
             typ: TOKEN_TYP,
             kid: `${payload.iss}:actor`,
         };
-        const promise = signToken(actorInfo.privateKeyJwk, header, payload)
+        const promise = signToken(signingKey, header, payload)
             .then(async (token) => {
-            const actorSig = await Dacument.signActorToken(token);
+            const actorSig = await Dacument.signActorToken(token, signingKey);
             const op = { token, actorSig };
             this.emitEvent("change", { type: "change", ops: [op] });
         })
             .catch((error) => {
-            onError?.();
+            options?.onError?.();
             this.emitError(error instanceof Error ? error : new Error(String(error)));
         });
         this.pending.add(promise);

@@ -53,6 +53,11 @@ export type ActorInfo = {
   publicKeyJwk: JsonWebKey;
 };
 
+export type ActorInfoUpdate = ActorInfo & {
+  currentPrivateKeyJwk?: JsonWebKey;
+  currentPublicKeyJwk?: JsonWebKey;
+};
+
 export type RegisterSchema<T extends JsTypeName = JsTypeName> = {
   crdt: "register";
   jsType: T;

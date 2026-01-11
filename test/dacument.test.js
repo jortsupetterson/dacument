@@ -3,12 +3,7 @@ import test from "node:test";
 import { Bytes, generateNonce } from "bytecodec";
 import { generateSignPair } from "zeyra";
 import { Dacument } from "../dist/index.js";
-import {
-  decodeToken,
-  encodeToken,
-  signDetached,
-  signToken,
-} from "../dist/Dacument/crypto.js";
+import { decodeToken, signDetached, signToken } from "../dist/Dacument/crypto.js";
 
 const ACTOR_ID = generateNonce();
 const actorKeys = await generateSignPair();
@@ -177,36 +172,45 @@ test("merge accepts editor register ops", async () => {
   assert.equal(doc.title, "alpha");
 });
 
-test("viewer acks are unsigned", async () => {
-  const { doc } = await createOwnerDoc();
-  const ownerOps = [];
-  doc.addEventListener("change", (event) => ownerOps.push(...event.ops));
-
+test("viewer acks are actor-signed", async () => {
+  const { doc, roleKeys } = await createOwnerDoc();
   const viewerId = generateNonce();
-  doc.acl.setRole(viewerId, "viewer");
-  await doc.flush();
-  await doc.merge(ownerOps);
-  ownerOps.length = 0;
+  const viewerKeys = await generateSignPair();
 
-  const seen = makeStamp(viewerId, Date.now());
-  const token = encodeToken(
-    { alg: "none", typ: "DACOP" },
-    {
-      iss: viewerId,
-      sub: doc.docId,
-      iat: Math.floor(Date.now() / 1000),
-      stamp: seen,
-      kind: "ack",
-      schema: doc.schemaId,
-      patch: { seen },
-    }
+  const grantToken = await signAclOp({
+    roleKey: roleKeys.owner.privateKey,
+    signerRole: "owner",
+    iss: ACTOR_ID,
+    docId: doc.docId,
+    schemaId: doc.schemaId,
+    target: viewerId,
+    role: "viewer",
+    stamp: makeStamp(ACTOR_ID, Date.now()),
+    publicKeyJwk: viewerKeys.verificationJwk,
+  });
+  await doc.merge([{ token: grantToken }]);
+
+  const seen = makeStamp(viewerId, Date.now() + 1);
+  const payload = {
+    iss: viewerId,
+    sub: doc.docId,
+    iat: Math.floor(Date.now() / 1000),
+    stamp: seen,
+    kind: "ack",
+    schema: doc.schemaId,
+    patch: { seen },
+  };
+  const token = await signToken(
+    viewerKeys.signingJwk,
+    { alg: "ES256", typ: "DACOP", kid: `${viewerId}:actor` },
+    payload
   );
 
   const result = await doc.merge([{ token }]);
   assert.equal(result.rejected, 0);
 });
 
-test("writer acks are unsigned", async () => {
+test("writer acks are actor-signed", async () => {
   const { doc } = await createOwnerDoc();
   const ops = [];
   doc.addEventListener("change", (event) => ops.push(...event.ops));
@@ -218,6 +222,7 @@ test("writer acks are unsigned", async () => {
 
   await doc.merge(changeOps);
   await new Promise((resolve) => setTimeout(resolve, 0));
+  await doc.flush();
 
   assert.ok(ops.length > 0);
   const [headerB64, payloadB64] = ops[0].token.split(".");
@@ -225,11 +230,12 @@ test("writer acks are unsigned", async () => {
   const header = JSON.parse(headerJson);
   const payloadJson = Bytes.toString(Bytes.fromBase64UrlString(payloadB64));
   const payload = JSON.parse(payloadJson);
-  assert.equal(header.alg, "none");
+  assert.equal(header.alg, "ES256");
+  assert.ok(header.kid.endsWith(":actor"));
   assert.equal(payload.kind, "ack");
 });
 
-test("signed acks are rejected", async () => {
+test("role-signed acks are rejected", async () => {
   const { doc, roleKeys, ownerId } = await createOwnerDoc();
   const stamp = { wallTimeMs: Date.now(), logical: 0, clockId: ownerId };
   const payload = {

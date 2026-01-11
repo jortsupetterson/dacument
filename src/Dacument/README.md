@@ -44,8 +44,11 @@ const doc = await Dacument.load({
 document with the highest role key you have (viewers load without a key).
 Snapshots do not include schema or schema ids; the caller must provide the schema.
 Call `await Dacument.setActorInfo(...)` once per process before creating schemas
-or loading. Subsequent calls are ignored. On first merge, Dacument auto-attaches
-the actor's `publicKeyJwk` to its ACL entry (if missing).
+or loading. Updating actor info requires providing the current keys. On first
+merge, Dacument auto-attaches the actor's `publicKeyJwk` to its ACL entry (if
+missing).
+To rotate actor keys in-process, call `Dacument.setActorInfo` again with the new
+keys plus `currentPrivateKeyJwk`/`currentPublicKeyJwk`.
 
 `roleKeys` includes owner/manager/editor key pairs; store and distribute them
 as needed.
@@ -67,7 +70,7 @@ Managers cannot change owner actors.
 
 ## Events
 
-- `doc.addEventListener("change", handler)` emits ops for network sync (writer ops are signed; acks are unsigned).
+- `doc.addEventListener("change", handler)` emits ops for network sync (writer ops are signed; acks are actor-signed).
 - `doc.addEventListener("merge", handler)` emits `{ actor, target, method, data }`.
 - `doc.addEventListener("error", handler)` emits signing/verification errors.
 - `doc.addEventListener("revoked", handler)` fires when the current actor is revoked.
@@ -82,7 +85,7 @@ Map keys must be JSON-compatible values. For string-keyed data, prefer `record`.
 
 Snapshots may include ops that are rejected on load; invalid ops are ignored.
 Tombstones are compacted once all non-revoked actors have acknowledged a given HLC
-via `ack` ops (emitted automatically after merges). Acks use `alg: "none"` and
-signed acks are rejected.
+via `ack` ops (emitted automatically after merges). Acks are ES256 actor-signed
+and accepted only if the actor public key is present in the ACL.
 
 See `README.md` for full usage and guarantees.

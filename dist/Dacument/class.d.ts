@@ -1,4 +1,4 @@
-import { type AclAssignment, type ActorInfo, type DacumentEventMap, type DocFieldAccess, type DocSnapshot, type RoleKeys, type RolePublicKeys, type SchemaDefinition, type SchemaId, type SignedOp, type VerificationResult, type VerifyActorIntegrityOptions, type Role, array, map, record, register, set, text } from "./types.js";
+import { type AclAssignment, type ActorInfoUpdate, type DacumentEventMap, type DocFieldAccess, type DocSnapshot, type RoleKeys, type RolePublicKeys, type SchemaDefinition, type SchemaId, type SignedOp, type VerificationResult, type VerifyActorIntegrityOptions, type Role, array, map, record, register, set, text } from "./types.js";
 type ResetStateInfo = {
     ts: AclAssignment["stamp"];
     by: string;
@@ -8,11 +8,13 @@ type ResetStateInfo = {
 export declare class Dacument<S extends SchemaDefinition> {
     private static actorInfo?;
     private static actorSigner?;
-    static setActorInfo(info: ActorInfo): Promise<void>;
+    private static actorInfoPrevious?;
+    static setActorInfo(info: ActorInfoUpdate): Promise<void>;
     private static requireActorInfo;
     private static requireActorSigner;
     private static signActorToken;
     private static isValidActorId;
+    private static actorInfoForPublicKey;
     private static assertActorKeyJwk;
     private static assertActorPrivateKey;
     private static assertActorPublicKey;
@@ -106,6 +108,7 @@ export declare class Dacument<S extends SchemaDefinition> {
     }>;
     private rebuildFromVerified;
     private maybePublishActorKey;
+    private actorSignatureKey;
     private ack;
     private scheduleAck;
     private computeGcBarrier;

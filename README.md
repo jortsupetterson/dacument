@@ -102,8 +102,10 @@ await doc.flush();
 Before any schema/load/create, call `await Dacument.setActorInfo(...)` once per
 process. The actor id must be a 256-bit base64url string (e.g.
 `bytecodec` libarys `generateNonce()`), and the actor key pair must be ES256 (P-256).
-Subsequent calls are ignored. On first merge, Dacument auto-attaches the
-actor's `publicKeyJwk` to its own ACL entry (if missing).
+Updating actor info requires providing the current keys. On first merge, Dacument
+auto-attaches the actor's `publicKeyJwk` to its own ACL entry (if missing).
+To rotate actor keys in-process, call `Dacument.setActorInfo` again with the new
+keys plus `currentPrivateKeyJwk`/`currentPublicKeyJwk`.
 
 Each actor signs with the role key they were given (owner/manager/editor). Load
 with the highest role key you have; viewers load without a key.
@@ -148,7 +150,7 @@ Snapshots do not include schema or schema ids; callers must supply the schema on
 
 ## Events and values
 
-- `doc.addEventListener("change", handler)` emits ops for network sync (writer ops are signed; acks are unsigned).
+- `doc.addEventListener("change", handler)` emits ops for network sync (writer ops are signed; acks are actor-signed).
 - `doc.addEventListener("merge", handler)` emits `{ actor, target, method, data }`.
 - `doc.addEventListener("error", handler)` emits signing/verification errors.
 - `doc.addEventListener("revoked", handler)` fires when the current actor is revoked.
@@ -192,15 +194,15 @@ from the ACL at the op stamp and returns a summary plus failures.
 
 Dacument tracks per-actor `ack` ops and compacts tombstones once all non-revoked
 actors (including viewers) have acknowledged a given HLC. Acks are emitted
-automatically after merges that apply new non-ack ops. Acks are unsigned
-(`alg: "none"`); signed acks are rejected.
+automatically after merges that apply new non-ack ops. Acks are ES256 actor-signed
+and accepted only if the actor public key is present in the ACL.
 If any non-revoked actor is offline and never acks, tombstones are kept.
 
 ## Guarantees
 
 - Schema enforcement is strict; unknown fields are rejected.
 - Ops are accepted only if the CRDT patch is valid and the signature verifies
-  (acks are unsigned and signed acks are rejected).
+  (acks require actor signatures).
 - Role checks are applied at the op stamp time (HLC).
 - IDs are base64url nonces from `bytecodec` librarys `generateNonce()` (32 random bytes).
 - Private keys are returned by `create()` and never stored by Dacument.
