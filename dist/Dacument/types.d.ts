@@ -69,7 +69,7 @@ export type RecordSchema<T extends JsTypeName = JsTypeName> = {
 export type FieldSchema = RegisterSchema | TextSchema | ArraySchema | SetSchema | MapSchema | RecordSchema;
 export type SchemaDefinition = Record<string, FieldSchema>;
 export type SchemaId = string;
-export type OpKind = "acl.set" | "register.set" | "text.patch" | "array.patch" | "map.patch" | "set.patch" | "record.patch" | "ack";
+export type OpKind = "acl.set" | "register.set" | "text.patch" | "array.patch" | "map.patch" | "set.patch" | "record.patch" | "ack" | "reset";
 export type OpPayload = {
     iss: string;
     sub: string;
@@ -83,6 +83,16 @@ export type OpPayload = {
 export type SignedOp = {
     token: string;
     actorSig?: string;
+};
+export type ResetPatch = {
+    newDocId: string;
+    reason?: string;
+};
+export type ResetState = {
+    ts: HLCStamp;
+    by: string;
+    newDocId: string;
+    reason?: string;
 };
 export type DacumentChangeEvent = {
     type: "change";
@@ -106,11 +116,20 @@ export type DacumentRevokedEvent = {
     by: string;
     stamp: HLCStamp;
 };
+export type DacumentResetEvent = {
+    type: "reset";
+    oldDocId: string;
+    newDocId: string;
+    ts: HLCStamp;
+    by: string;
+    reason?: string;
+};
 export type DacumentEventMap = {
     change: DacumentChangeEvent;
     merge: DacumentMergeEvent;
     error: DacumentErrorEvent;
     revoked: DacumentRevokedEvent;
+    reset: DacumentResetEvent;
 };
 export type AclAssignment = {
     id: string;

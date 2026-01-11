@@ -71,7 +71,10 @@ Managers cannot change owner actors.
 - `doc.addEventListener("merge", handler)` emits `{ actor, target, method, data }`.
 - `doc.addEventListener("error", handler)` emits signing/verification errors.
 - `doc.addEventListener("revoked", handler)` fires when the current actor is revoked.
+- `doc.addEventListener("reset", handler)` emits `{ oldDocId, newDocId, ts, by, reason }`.
 - `doc.selfRevoke()` emits a signed ACL op that revokes the current actor.
+- `await doc.accessReset({ reason })` creates a new dacument with fresh keys and emits a reset op.
+- `doc.getResetState()` returns reset metadata (or `null`).
 - `doc.snapshot()` returns a loadable op log (`{ docId, roleKeys, ops }`).
 - `await doc.verifyActorIntegrity(...)` verifies per-actor signatures on demand.
 

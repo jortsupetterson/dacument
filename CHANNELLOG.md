@@ -1,5 +1,11 @@
 # Channel Log
 
+## 1.2.0
+
+- Add access reset flow with signed reset ops and reset events.
+- Block post-reset writes, preserve snapshots, and expose reset status.
+- Add access-reset benchmarks and end-to-end reset tests.
+
 ## 1.1.0
 
 - Add `setActorInfo` with per-actor ES256 keys and validation.

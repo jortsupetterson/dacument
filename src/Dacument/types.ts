@@ -113,7 +113,8 @@ export type OpKind =
   | "map.patch"
   | "set.patch"
   | "record.patch"
-  | "ack";
+  | "ack"
+  | "reset";
 
 export type OpPayload = {
   iss: string;
@@ -129,6 +130,18 @@ export type OpPayload = {
 export type SignedOp = {
   token: string;
   actorSig?: string;
+};
+
+export type ResetPatch = {
+  newDocId: string;
+  reason?: string;
+};
+
+export type ResetState = {
+  ts: HLCStamp;
+  by: string;
+  newDocId: string;
+  reason?: string;
 };
 
 export type DacumentChangeEvent = {
@@ -157,11 +170,21 @@ export type DacumentRevokedEvent = {
   stamp: HLCStamp;
 };
 
+export type DacumentResetEvent = {
+  type: "reset";
+  oldDocId: string;
+  newDocId: string;
+  ts: HLCStamp;
+  by: string;
+  reason?: string;
+};
+
 export type DacumentEventMap = {
   change: DacumentChangeEvent;
   merge: DacumentMergeEvent;
   error: DacumentErrorEvent;
   revoked: DacumentRevokedEvent;
+  reset: DacumentResetEvent;
 };
 
 export type AclAssignment = {

@@ -21,6 +21,17 @@ function isObject(value) {
 function isStringArray(value) {
     return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
+function isValidNonceId(value) {
+    if (typeof value !== "string")
+        return false;
+    try {
+        const bytes = Bytes.fromBase64UrlString(value);
+        return bytes.byteLength === 32 && value.length === 43;
+    }
+    catch {
+        return false;
+    }
+}
 function stableKey(value) {
     if (value === null)
         return "null";
@@ -82,6 +93,17 @@ function isAckPatch(value) {
     return (typeof seen.wallTimeMs === "number" &&
         typeof seen.logical === "number" &&
         typeof seen.clockId === "string");
+}
+function isResetPatch(value) {
+    if (!isObject(value))
+        return false;
+    if (typeof value.newDocId !== "string")
+        return false;
+    if (!isValidNonceId(value.newDocId))
+        return false;
+    if ("reason" in value && value.reason !== undefined && typeof value.reason !== "string")
+        return false;
+    return true;
 }
 function isPatchEnvelope(value) {
     return isObject(value) && Array.isArray(value.nodes);
@@ -174,15 +196,7 @@ export class Dacument {
         return Bytes.toBase64UrlString(signature);
     }
     static isValidActorId(actorId) {
-        if (typeof actorId !== "string")
-            return false;
-        try {
-            const bytes = Bytes.fromBase64UrlString(actorId);
-            return bytes.byteLength === 32 && actorId.length === 43;
-        }
-        catch {
-            return false;
-        }
+        return isValidNonceId(actorId);
     }
     static assertActorKeyJwk(jwk, label) {
         if (!jwk || typeof jwk !== "object")
@@ -472,6 +486,7 @@ export class Dacument {
     actorSigByToken = new Map();
     appliedTokens = new Set();
     currentRole;
+    resetState = null;
     revokedCrdtByField = new Map();
     deleteStampsByField = new Map();
     tombstoneStampsByField = new Map();
@@ -488,6 +503,24 @@ export class Dacument {
         for (const key of this.fields.keys())
             values.set(key, this.fieldValue(key));
         return values;
+    }
+    resetError() {
+        const newDocId = this.resetState?.newDocId ?? "unknown";
+        return new Error(`Dacument is reset/deprecated. Use newDocId: ${newDocId}`);
+    }
+    assertNotReset() {
+        if (this.resetState)
+            throw this.resetError();
+    }
+    currentRoleFor(actorId) {
+        if (this.resetState)
+            return "revoked";
+        return this.aclLog.currentRole(actorId);
+    }
+    roleAt(actorId, stamp) {
+        if (this.resetState && compareHLC(stamp, this.resetState.ts) > 0)
+            return "revoked";
+        return this.aclLog.roleAt(actorId, stamp);
     }
     recordActorSig(token, actorSig) {
         if (!actorSig || this.actorSigByToken.has(token))
@@ -517,11 +550,11 @@ export class Dacument {
         }
         this.acl = {
             setRole: (actorId, role) => this.setRole(actorId, role),
-            getRole: (actorId) => this.aclLog.currentRole(actorId),
+            getRole: (actorId) => this.currentRoleFor(actorId),
             knownActors: () => this.aclLog.knownActors(),
             snapshot: () => this.aclLog.snapshot(),
         };
-        this.currentRole = this.aclLog.currentRole(this.actorId);
+        this.currentRole = this.currentRoleFor(this.actorId);
         return new Proxy(this, {
             get: (target, property, receiver) => {
                 if (typeof property !== "string")
@@ -588,7 +621,7 @@ export class Dacument {
         await Promise.all([...this.pending]);
     }
     snapshot() {
-        if (this.isRevoked())
+        if (this.isRevoked() && !this.resetState)
             throw new Error("Dacument: revoked actors cannot snapshot");
         const ops = this.opLog.map((op) => {
             const actorSig = this.actorSigByToken.get(op.token);
@@ -600,9 +633,20 @@ export class Dacument {
             ops,
         };
     }
+    getResetState() {
+        return this.resetState
+            ? {
+                ts: this.resetState.ts,
+                by: this.resetState.by,
+                newDocId: this.resetState.newDocId,
+                reason: this.resetState.reason,
+            }
+            : null;
+    }
     selfRevoke() {
+        this.assertNotReset();
         const stamp = this.clock.next();
-        const role = this.aclLog.roleAt(this.actorId, stamp);
+        const role = this.roleAt(this.actorId, stamp);
         if (role === "revoked")
             return;
         const actorInfo = Dacument.requireActorInfo();
@@ -628,6 +672,52 @@ export class Dacument {
             return;
         }
         this.queueActorOp(payload);
+    }
+    async accessReset(options = {}) {
+        this.assertNotReset();
+        const stamp = this.clock.next();
+        const role = this.roleAt(this.actorId, stamp);
+        if (role !== "owner")
+            throw new Error("Dacument: only owner can accessReset");
+        if (!this.roleKey)
+            throw new Error("Dacument: missing owner private key");
+        const schema = this.materializeSchema();
+        const created = await Dacument.create({ schema });
+        const newDoc = await Dacument.load({
+            schema,
+            roleKey: created.roleKeys.owner.privateKey,
+            snapshot: created.snapshot,
+        });
+        const patch = {
+            newDocId: created.docId,
+        };
+        if (options.reason)
+            patch.reason = options.reason;
+        const payload = {
+            iss: this.actorId,
+            sub: this.docId,
+            iat: nowSeconds(),
+            stamp,
+            kind: "reset",
+            schema: this.schemaId,
+            patch,
+        };
+        const header = {
+            alg: "ES256",
+            typ: TOKEN_TYP,
+            kid: `${this.actorId}:owner`,
+        };
+        const token = await signToken(this.roleKey, header, payload);
+        const actorSig = await Dacument.signActorToken(token);
+        const oldDocOps = [{ token, actorSig }];
+        this.emitEvent("change", { type: "change", ops: oldDocOps });
+        await this.merge(oldDocOps);
+        return {
+            newDoc,
+            oldDocOps,
+            newDocSnapshot: created.snapshot,
+            roleKeys: created.roleKeys,
+        };
     }
     async verifyActorIntegrity(options = {}) {
         const input = options.token !== undefined
@@ -831,7 +921,7 @@ export class Dacument {
             const entry = this.aclLog.currentEntry(this.actorId);
             this.emitRevoked(prevRole, entry?.by ?? this.actorId, entry?.stamp ?? this.clock.current);
         }
-        if (appliedNonAck)
+        if (appliedNonAck && !this.resetState)
             this.scheduleAck();
         this.maybeGc();
         this.maybePublishActorKey();
@@ -847,6 +937,8 @@ export class Dacument {
         this.tombstoneStampsByField.clear();
         this.deleteNodeStampsByField.clear();
         this.revokedCrdtByField.clear();
+        this.resetState = null;
+        let resetStamp = null;
         for (const state of this.fields.values()) {
             state.crdt = createEmptyField(state.schema);
         }
@@ -864,8 +956,21 @@ export class Dacument {
             return left.token < right.token ? -1 : 1;
         });
         for (const { token, payload, signerRole } of ops) {
+            if (resetStamp && compareHLC(payload.stamp, resetStamp) > 0)
+                continue;
             let allowed = false;
-            if (payload.kind === "acl.set") {
+            const isReset = payload.kind === "reset";
+            if (isReset) {
+                if (this.resetState)
+                    continue;
+                if (!isResetPatch(payload.patch))
+                    continue;
+                const roleAt = this.roleAt(payload.iss, payload.stamp);
+                if (signerRole === "owner" && roleAt === "owner") {
+                    allowed = true;
+                }
+            }
+            else if (payload.kind === "acl.set") {
                 const patch = isAclPatch(payload.patch) ? payload.patch : null;
                 if (!patch)
                     continue;
@@ -876,7 +981,7 @@ export class Dacument {
                     allowed = true;
                 }
                 else {
-                    const roleAt = this.aclLog.roleAt(payload.iss, payload.stamp);
+                    const roleAt = this.roleAt(payload.iss, payload.stamp);
                     const isSelfRevoke = patch.target === payload.iss && patch.role === "revoked";
                     const targetKey = this.aclLog.publicKeyAt(patch.target, payload.stamp);
                     const isSelfKeyUpdate = patch.target === payload.iss &&
@@ -912,7 +1017,7 @@ export class Dacument {
                 }
             }
             else {
-                const roleAt = this.aclLog.roleAt(payload.iss, payload.stamp);
+                const roleAt = this.roleAt(payload.iss, payload.stamp);
                 if (payload.kind === "ack") {
                     if (roleAt === "revoked")
                         continue;
@@ -930,19 +1035,23 @@ export class Dacument {
             const emit = !previousApplied.has(token);
             this.suppressMerge = !emit;
             try {
-                const applied = this.applyRemotePayload(payload, signerRole);
+                const applied = isReset
+                    ? this.applyResetPayload(payload, emit)
+                    : this.applyRemotePayload(payload, signerRole);
                 if (!applied)
                     continue;
             }
             finally {
                 this.suppressMerge = false;
             }
+            if (isReset)
+                resetStamp = payload.stamp;
             this.appliedTokens.add(token);
             invalidated.delete(token);
             if (emit && payload.kind !== "ack")
                 appliedNonAck = true;
         }
-        this.currentRole = this.aclLog.currentRole(this.actorId);
+        this.currentRole = this.currentRoleFor(this.actorId);
         if (invalidated.size > 0 &&
             options?.beforeValues &&
             options.diffActor &&
@@ -952,6 +1061,8 @@ export class Dacument {
         return { appliedNonAck };
     }
     maybePublishActorKey() {
+        if (this.resetState)
+            return;
         const entry = this.aclLog.currentEntry(this.actorId);
         if (entry?.publicKeyJwk) {
             this.actorKeyPublishPending = false;
@@ -985,8 +1096,9 @@ export class Dacument {
         });
     }
     ack() {
+        this.assertNotReset();
         const stamp = this.clock.next();
-        const role = this.aclLog.roleAt(this.actorId, stamp);
+        const role = this.roleAt(this.actorId, stamp);
         if (role === "revoked")
             throw new Error("Dacument: revoked actors cannot acknowledge");
         const seen = this.clock.current;
@@ -1005,6 +1117,8 @@ export class Dacument {
         if (this.ackScheduled)
             return;
         if (this.currentRole === "revoked")
+            return;
+        if (this.resetState)
             return;
         this.ackScheduled = true;
         queueMicrotask(() => {
@@ -1034,6 +1148,8 @@ export class Dacument {
         return barrier;
     }
     maybeGc() {
+        if (this.resetState)
+            return;
         const barrier = this.computeGcBarrier();
         if (!barrier)
             return;
@@ -1160,8 +1276,9 @@ export class Dacument {
             throw new Error(`Dacument: invalid value for '${field}'`);
         if (schema.regex && typeof value === "string" && !schema.regex.test(value))
             throw new Error(`Dacument: '${field}' failed regex`);
+        this.assertNotReset();
         const stamp = this.clock.next();
-        const role = this.aclLog.roleAt(this.actorId, stamp);
+        const role = this.roleAt(this.actorId, stamp);
         if (!this.canWriteField(role))
             throw new Error(`Dacument: role '${role}' cannot write '${field}'`);
         this.queueLocalOp({
@@ -1340,7 +1457,7 @@ export class Dacument {
             insertAt(index, value) {
                 doc.assertValueType(field, value);
                 const stamp = doc.clock.next();
-                const role = doc.aclLog.roleAt(doc.actorId, stamp);
+                const role = doc.roleAt(doc.actorId, stamp);
                 doc.assertWritable(field, role);
                 const shadow = doc.shadowFor(field, state);
                 const { patches, result } = doc.capturePatches((listener) => shadow.onChange(listener), () => shadow.insertAt(index, value));
@@ -1360,7 +1477,7 @@ export class Dacument {
             },
             deleteAt(index) {
                 const stamp = doc.clock.next();
-                const role = doc.aclLog.roleAt(doc.actorId, stamp);
+                const role = doc.roleAt(doc.actorId, stamp);
                 doc.assertWritable(field, role);
                 const shadow = doc.shadowFor(field, state);
                 const { patches, result } = doc.capturePatches((listener) => shadow.onChange(listener), () => shadow.deleteAt(index));
@@ -1568,7 +1685,7 @@ export class Dacument {
     commitArrayMutation(field, mutate) {
         const state = this.fields.get(field);
         const stamp = this.clock.next();
-        const role = this.aclLog.roleAt(this.actorId, stamp);
+        const role = this.roleAt(this.actorId, stamp);
         this.assertWritable(field, role);
         const shadow = this.shadowFor(field, state);
         const { patches, result } = this.capturePatches((listener) => shadow.onChange(listener), () => mutate(shadow));
@@ -1589,7 +1706,7 @@ export class Dacument {
     commitSetMutation(field, mutate) {
         const state = this.fields.get(field);
         const stamp = this.clock.next();
-        const role = this.aclLog.roleAt(this.actorId, stamp);
+        const role = this.roleAt(this.actorId, stamp);
         this.assertWritable(field, role);
         const shadow = this.shadowFor(field, state);
         const { patches, result } = this.capturePatches((listener) => shadow.onChange(listener), () => mutate(shadow));
@@ -1610,7 +1727,7 @@ export class Dacument {
     commitMapMutation(field, mutate) {
         const state = this.fields.get(field);
         const stamp = this.clock.next();
-        const role = this.aclLog.roleAt(this.actorId, stamp);
+        const role = this.roleAt(this.actorId, stamp);
         this.assertWritable(field, role);
         const shadow = this.shadowFor(field, state);
         const { patches, result } = this.capturePatches((listener) => shadow.onChange(listener), () => mutate(shadow));
@@ -1631,7 +1748,7 @@ export class Dacument {
     commitRecordMutation(field, mutate) {
         const state = this.fields.get(field);
         const stamp = this.clock.next();
-        const role = this.aclLog.roleAt(this.actorId, stamp);
+        const role = this.roleAt(this.actorId, stamp);
         this.assertWritable(field, role);
         const shadow = this.shadowFor(field, state);
         const { patches, result } = this.capturePatches((listener) => shadow.onChange(listener), () => mutate(shadow));
@@ -1662,6 +1779,7 @@ export class Dacument {
         return { patches, result };
     }
     queueLocalOp(payload, role) {
+        this.assertNotReset();
         if (payload.kind === "ack") {
             const header = { alg: "none", typ: TOKEN_TYP };
             const token = encodeToken(header, payload);
@@ -1684,6 +1802,7 @@ export class Dacument {
         promise.finally(() => this.pending.delete(promise));
     }
     queueActorOp(payload, onError) {
+        this.assertNotReset();
         const actorInfo = Dacument.requireActorInfo();
         const header = {
             alg: "ES256",
@@ -1702,6 +1821,23 @@ export class Dacument {
         });
         this.pending.add(promise);
         promise.finally(() => this.pending.delete(promise));
+    }
+    applyResetPayload(payload, emit) {
+        if (!isResetPatch(payload.patch))
+            return false;
+        if (this.resetState)
+            return false;
+        this.clock.observe(payload.stamp);
+        const patch = payload.patch;
+        this.resetState = {
+            ts: payload.stamp,
+            by: payload.iss,
+            newDocId: patch.newDocId,
+            reason: patch.reason,
+        };
+        if (emit)
+            this.emitReset(this.resetState);
+        return true;
     }
     applyRemotePayload(payload, signerRole) {
         this.clock.observe(payload.stamp);
@@ -2168,8 +2304,9 @@ export class Dacument {
         return count;
     }
     setRole(actorId, role) {
+        this.assertNotReset();
         const stamp = this.clock.next();
-        const signerRole = this.aclLog.roleAt(this.actorId, stamp);
+        const signerRole = this.roleAt(this.actorId, stamp);
         if (!this.canWriteAclTarget(signerRole, role, actorId, stamp))
             throw new Error(`Dacument: role '${signerRole}' cannot grant '${role}'`);
         const assignmentId = uuidv7();
@@ -2222,6 +2359,62 @@ export class Dacument {
                 return this.recordValue(crdt);
         }
     }
+    materializeSchema() {
+        const output = {};
+        for (const [field, schema] of Object.entries(this.schema)) {
+            const current = this.fieldValue(field);
+            if (schema.crdt === "register") {
+                const next = { ...schema };
+                if (isValueOfType(current, schema.jsType)) {
+                    if (schema.regex &&
+                        typeof current === "string" &&
+                        !schema.regex.test(current))
+                        throw new Error(`Dacument.accessReset: '${field}' failed regex`);
+                    next.initial = current;
+                }
+                else {
+                    delete next.initial;
+                }
+                output[field] = next;
+                continue;
+            }
+            if (schema.crdt === "text") {
+                output[field] = {
+                    ...schema,
+                    initial: typeof current === "string" ? current : "",
+                };
+                continue;
+            }
+            if (schema.crdt === "array") {
+                output[field] = {
+                    ...schema,
+                    initial: Array.isArray(current) ? current : [],
+                };
+                continue;
+            }
+            if (schema.crdt === "set") {
+                output[field] = {
+                    ...schema,
+                    initial: Array.isArray(current) ? current : [],
+                };
+                continue;
+            }
+            if (schema.crdt === "map") {
+                output[field] = {
+                    ...schema,
+                    initial: Array.isArray(current) ? current : [],
+                };
+                continue;
+            }
+            if (schema.crdt === "record") {
+                output[field] =
+                    current && isObject(current) && !Array.isArray(current)
+                        ? { ...schema, initial: current }
+                        : { ...schema, initial: {} };
+            }
+        }
+        return output;
+    }
     emitEvent(type, event) {
         const listeners = this.eventListeners.get(type);
         if (!listeners)
@@ -2245,6 +2438,16 @@ export class Dacument {
             stamp,
         });
     }
+    emitReset(payload) {
+        this.emitEvent("reset", {
+            type: "reset",
+            oldDocId: this.docId,
+            newDocId: payload.newDocId,
+            ts: payload.ts,
+            by: payload.by,
+            reason: payload.reason,
+        });
+    }
     emitError(error) {
         this.emitEvent("error", { type: "error", error });
     }
@@ -2262,13 +2465,14 @@ export class Dacument {
         if (!this.canWriteAcl(role, targetRole))
             return false;
         if (role === "manager") {
-            const targetRoleAt = this.aclLog.roleAt(targetActorId, stamp);
+            const targetRoleAt = this.roleAt(targetActorId, stamp);
             if (targetRoleAt === "owner")
                 return false;
         }
         return true;
     }
     assertWritable(field, role) {
+        this.assertNotReset();
         if (!this.canWriteField(role))
             throw new Error(`Dacument: role '${role}' cannot write '${field}'`);
     }

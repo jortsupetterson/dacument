@@ -1,4 +1,10 @@
 import { type AclAssignment, type ActorInfo, type DacumentEventMap, type DocFieldAccess, type DocSnapshot, type RoleKeys, type RolePublicKeys, type SchemaDefinition, type SchemaId, type SignedOp, type VerificationResult, type VerifyActorIntegrityOptions, type Role, array, map, record, register, set, text } from "./types.js";
+type ResetStateInfo = {
+    ts: AclAssignment["stamp"];
+    by: string;
+    newDocId: string;
+    reason?: string;
+};
 export declare class Dacument<S extends SchemaDefinition> {
     private static actorInfo?;
     private static actorSigner?;
@@ -48,6 +54,7 @@ export declare class Dacument<S extends SchemaDefinition> {
     private readonly actorSigByToken;
     private readonly appliedTokens;
     private currentRole;
+    private resetState;
     private readonly revokedCrdtByField;
     private readonly deleteStampsByField;
     private readonly tombstoneStampsByField;
@@ -60,6 +67,10 @@ export declare class Dacument<S extends SchemaDefinition> {
     private actorKeyPublishPending;
     private lastGcBarrier;
     private snapshotFieldValues;
+    private resetError;
+    private assertNotReset;
+    private currentRoleFor;
+    private roleAt;
     private recordActorSig;
     readonly acl: {
         setRole: (actorId: string, role: Role) => void;
@@ -78,7 +89,16 @@ export declare class Dacument<S extends SchemaDefinition> {
     removeEventListener<K extends keyof DacumentEventMap>(type: K, listener: (event: DacumentEventMap[K]) => void): void;
     flush(): Promise<void>;
     snapshot(): DocSnapshot;
+    getResetState(): ResetStateInfo | null;
     selfRevoke(): void;
+    accessReset(options?: {
+        reason?: string;
+    }): Promise<{
+        newDoc: DacumentDoc<S>;
+        oldDocOps: SignedOp[];
+        newDocSnapshot: DocSnapshot;
+        roleKeys: RoleKeys;
+    }>;
     verifyActorIntegrity(options?: VerifyActorIntegrityOptions): Promise<VerificationResult>;
     merge(input: SignedOp | SignedOp[] | string | string[]): Promise<{
         accepted: SignedOp[];
@@ -116,6 +136,7 @@ export declare class Dacument<S extends SchemaDefinition> {
     private capturePatches;
     private queueLocalOp;
     private queueActorOp;
+    private applyResetPayload;
     private applyRemotePayload;
     private applyAclPayload;
     private applyRegisterPayload;
@@ -139,9 +160,11 @@ export declare class Dacument<S extends SchemaDefinition> {
     private recordValue;
     private mapValue;
     private fieldValue;
+    private materializeSchema;
     private emitEvent;
     private emitMerge;
     private emitRevoked;
+    private emitReset;
     private emitError;
     private canWriteField;
     private canWriteAcl;
@@ -154,3 +177,4 @@ export declare class Dacument<S extends SchemaDefinition> {
     private assertSchemaKeys;
 }
 export type DacumentDoc<S extends SchemaDefinition> = Dacument<S> & DocFieldAccess<S>;
+export {};

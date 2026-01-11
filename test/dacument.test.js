@@ -90,6 +90,31 @@ async function signAclOp({
   );
 }
 
+async function signResetOp({
+  roleKey,
+  iss,
+  docId,
+  schemaId,
+  stamp,
+  newDocId,
+  reason,
+}) {
+  const payload = {
+    iss,
+    sub: docId,
+    iat: Math.floor(Date.now() / 1000),
+    stamp,
+    kind: "reset",
+    schema: schemaId,
+    patch: { newDocId, reason },
+  };
+  return signToken(
+    roleKey,
+    { alg: "ES256", typ: "DACOP", kid: `${iss}:owner` },
+    payload
+  );
+}
+
 async function createOwnerDoc() {
   const { snapshot, roleKeys } = await Dacument.create({ schema });
   const doc = await Dacument.load({
@@ -617,6 +642,135 @@ test("verifyActorIntegrity detects impersonation", async () => {
   });
   assert.equal(verification.ok, false);
   assert.equal(verification.failed, 1);
+});
+
+test("accessReset materializes state and returns new keys", async () => {
+  const { doc, roleKeys } = await createOwnerDoc();
+  const ops = [];
+  doc.addEventListener("change", (event) => ops.push(...event.ops));
+
+  doc.title = "alpha";
+  doc.body.insertAt(0, "h");
+  doc.items.push("milk");
+  doc.tags.add("x");
+  doc.meta.note = "ok";
+  await doc.flush();
+  await doc.merge(ops);
+
+  const result = await doc.accessReset({ reason: "compromise" });
+  assert.notEqual(result.newDoc.docId, doc.docId);
+  assert.equal(result.newDoc.title, "alpha");
+  assert.equal(result.newDoc.body.toString(), "h");
+  assert.deepEqual([...result.newDoc.items], ["milk"]);
+  assert.equal(result.newDoc.tags.has("x"), true);
+  assert.equal(result.newDoc.meta.note, "ok");
+  assert.notDeepEqual(result.roleKeys.owner.publicKey, roleKeys.owner.publicKey);
+});
+
+test("reset emits event and blocks writes", async () => {
+  const { doc } = await createOwnerDoc();
+  const resetEvents = [];
+  doc.addEventListener("reset", (event) => resetEvents.push(event));
+
+  const result = await doc.accessReset({ reason: "compromised" });
+  assert.equal(resetEvents.length, 1);
+  assert.equal(resetEvents[0].newDocId, result.newDoc.docId);
+  assert.equal(doc.acl.getRole(ACTOR_ID), "revoked");
+  assert.throws(() => {
+    doc.title = "nope";
+  }, /reset\/deprecated/i);
+
+  const snapshot = doc.snapshot();
+  const resetOps = snapshot.ops
+    .map((op) => decodeToken(op.token))
+    .filter((decoded) => decoded?.payload?.kind === "reset");
+  assert.equal(resetOps.length, 1);
+  assert.equal(resetOps[0].payload.patch.newDocId, result.newDoc.docId);
+});
+
+test("accessReset requires owner role", async () => {
+  const { doc } = await createOwnerDoc();
+  const ops = [];
+  doc.addEventListener("change", (event) => ops.push(...event.ops));
+
+  doc.acl.setRole(ACTOR_ID, "viewer");
+  await doc.flush();
+  await doc.merge(ops);
+
+  await assert.rejects(() => doc.accessReset(), /only owner/i);
+});
+
+test("reset determinism picks earliest reset", async () => {
+  const { snapshot, roleKeys } = await Dacument.create({ schema });
+  const docA = await Dacument.load({
+    schema,
+    roleKey: roleKeys.owner.privateKey,
+    snapshot,
+  });
+  const docB = await Dacument.load({
+    schema,
+    roleKey: roleKeys.owner.privateKey,
+    snapshot,
+  });
+
+  const baseTime = Date.now() + 1000;
+  const newDocIdA = generateNonce();
+  const newDocIdB = generateNonce();
+  const resetEarly = await signResetOp({
+    roleKey: roleKeys.owner.privateKey,
+    iss: ACTOR_ID,
+    docId: docA.docId,
+    schemaId: docA.schemaId,
+    stamp: makeStamp(ACTOR_ID, baseTime),
+    newDocId: newDocIdA,
+    reason: "early",
+  });
+  const resetLate = await signResetOp({
+    roleKey: roleKeys.owner.privateKey,
+    iss: ACTOR_ID,
+    docId: docA.docId,
+    schemaId: docA.schemaId,
+    stamp: makeStamp(ACTOR_ID, baseTime + 10),
+    newDocId: newDocIdB,
+    reason: "late",
+  });
+
+  await docA.merge([{ token: resetLate }, { token: resetEarly }]);
+  await docB.merge([{ token: resetEarly }, { token: resetLate }]);
+
+  const stateA = docA.getResetState();
+  const stateB = docB.getResetState();
+  assert.equal(stateA?.newDocId, newDocIdA);
+  assert.equal(stateB?.newDocId, newDocIdA);
+});
+
+test("ops after reset timestamp are rejected", async () => {
+  const { doc, roleKeys } = await createOwnerDoc();
+  const resetStamp = makeStamp(ACTOR_ID, Date.now() + 1000);
+  const resetToken = await signResetOp({
+    roleKey: roleKeys.owner.privateKey,
+    iss: ACTOR_ID,
+    docId: doc.docId,
+    schemaId: doc.schemaId,
+    stamp: resetStamp,
+    newDocId: generateNonce(),
+    reason: "reset",
+  });
+  await doc.merge([{ token: resetToken }]);
+
+  const lateToken = await signRegisterOp({
+    roleKey: roleKeys.owner.privateKey,
+    signerRole: "owner",
+    iss: ACTOR_ID,
+    docId: doc.docId,
+    schemaId: doc.schemaId,
+    field: "title",
+    value: "late",
+    stamp: makeStamp(ACTOR_ID, resetStamp.wallTimeMs + 10),
+  });
+  const result = await doc.merge([{ token: lateToken }]);
+  assert.equal(result.accepted.length, 0);
+  assert.equal(doc.title, null);
 });
 
 test("docId generation is 256-bit base64url", async () => {

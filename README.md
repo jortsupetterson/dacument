@@ -152,11 +152,33 @@ Snapshots do not include schema or schema ids; callers must supply the schema on
 - `doc.addEventListener("merge", handler)` emits `{ actor, target, method, data }`.
 - `doc.addEventListener("error", handler)` emits signing/verification errors.
 - `doc.addEventListener("revoked", handler)` fires when the current actor is revoked.
+- `doc.addEventListener("reset", handler)` emits `{ oldDocId, newDocId, ts, by, reason }`.
 - `doc.selfRevoke()` emits a signed ACL op that revokes the current actor.
+- `await doc.accessReset({ reason })` creates a new dacument with fresh keys and emits a reset op.
+- `doc.getResetState()` returns reset metadata (or `null`).
 - `await doc.flush()` waits for pending signatures so all local ops are emitted.
 - `doc.snapshot()` returns a loadable op log (`{ docId, roleKeys, ops }`).
 - `await doc.verifyActorIntegrity(...)` verifies per-actor signatures on demand.
 - Revoked actors cannot snapshot; reads are masked to initial values.
+
+## Access reset (key compromise response)
+
+If an owner suspects role key compromise, call `accessReset()` to fork to a new
+doc id and revoke the old one:
+
+```ts
+const { newDoc, oldDocOps, newDocSnapshot, roleKeys } =
+  await doc.accessReset({ reason: "suspected compromise" });
+```
+
+`accessReset()` materializes the current state into a new dacument with fresh
+role keys, emits a signed `reset` op for the old doc, and returns the new
+snapshot + keys. The reset is stored as a CRDT op so all replicas converge. Once
+reset, the old doc rejects any ops after the reset stamp and throws on writes:
+`Dacument is reset/deprecated. Use newDocId: <id>`. Snapshots and verification
+still work so you can archive/inspect history.
+If an attacker already has the owner key, they can also reset; this is a
+response tool for suspected compromise, not a prevention mechanism.
 
 ## Actor identity (cold path)
 
