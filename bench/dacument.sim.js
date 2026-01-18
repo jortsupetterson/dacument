@@ -107,7 +107,7 @@ if (isMainThread) {
     }
   };
 
-  doc.addEventListener("change", (event) => {
+  doc.addEventListener("delta", (event) => {
     noteOp();
     ownerOps.push(...event.ops);
     dispatchOwnerOps().catch((err) => console.error("owner dispatch", err));
@@ -506,7 +506,7 @@ if (isMainThread) {
     parentPort.postMessage({ type: "revoked", actorId });
   });
 
-  doc.addEventListener("change", (event) => {
+  doc.addEventListener("delta", (event) => {
     const ops = event.ops;
     if (mode === "tamper" && Math.random() < 0.4) {
       const tampered = ops.map((op, index) => {

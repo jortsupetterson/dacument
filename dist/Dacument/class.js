@@ -746,7 +746,7 @@ export class Dacument {
         const token = await signToken(this.roleKey, header, payload);
         const actorSig = await Dacument.signActorToken(token);
         const oldDocOps = [{ token, actorSig }];
-        this.emitEvent("change", { type: "change", ops: oldDocOps });
+        this.emitEvent("delta", { type: "delta", ops: oldDocOps });
         await this.merge(oldDocOps);
         return {
             newDoc,
@@ -1860,7 +1860,7 @@ export class Dacument {
                 ? await Dacument.signActorToken(token, actorSigKey)
                 : undefined;
             const op = actorSig ? { token, actorSig } : { token };
-            this.emitEvent("change", { type: "change", ops: [op] });
+            this.emitEvent("delta", { type: "delta", ops: [op] });
         })
             .catch((error) => this.emitError(error instanceof Error ? error : new Error(String(error))));
         this.pending.add(promise);
@@ -1879,7 +1879,7 @@ export class Dacument {
             .then(async (token) => {
             const actorSig = await Dacument.signActorToken(token, signingKey);
             const op = { token, actorSig };
-            this.emitEvent("change", { type: "change", ops: [op] });
+            this.emitEvent("delta", { type: "delta", ops: [op] });
         })
             .catch((error) => {
             options?.onError?.();

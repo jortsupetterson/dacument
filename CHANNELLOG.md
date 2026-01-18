@@ -1,5 +1,11 @@
 # Channel Log
 
+## 2.0.0
+
+- Rename the sync event from `change` to `delta` and update event payload types.
+- Make non-register fields readonly at the type level while keeping register fields writable.
+- Add Playwright browser coverage plus TypeScript inference checks.
+
 ## 1.2.2
 
 - Make `computeSchemaId` private to keep the public API surface tighter.

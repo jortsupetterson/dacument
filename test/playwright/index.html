@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dacument Playwright Harness</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "bytecodec": "/node_modules/bytecodec/dist/index.js",
+          "zeyra": "/node_modules/zeyra/dist/index.js",
+          "uuid": "/node_modules/uuid/dist/index.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <script type="module">
+      window.__dacumentReady = import("/dist/index.js");
+    </script>
+  </body>
+</html>

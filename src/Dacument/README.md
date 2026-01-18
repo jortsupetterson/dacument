@@ -72,7 +72,7 @@ Managers cannot change owner roles.
 
 ## Events
 
-- `doc.addEventListener("change", handler)` emits ops for network sync
+- `doc.addEventListener("delta", handler)` emits ops for network sync
   (writer ops are role-signed; acks are actor-signed by non-revoked actors and
   verified against ACL-pinned actor public keys).
 - `doc.addEventListener("merge", handler)` emits `{ actor, target, method, data }`.

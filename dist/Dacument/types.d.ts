@@ -47,17 +47,20 @@ export type TextSchema = {
     jsType: "string";
     initial?: string;
 };
+type KeyFn<T> = {
+    bivarianceHack(value: T): string;
+}["bivarianceHack"];
 export type ArraySchema<T extends JsTypeName = JsTypeName> = {
     crdt: "array";
     jsType: T;
     initial?: JsTypeValue<T>[];
-    key?: (value: JsTypeValue<T>) => string;
+    key?: KeyFn<JsTypeValue<T>>;
 };
 export type SetSchema<T extends JsTypeName = JsTypeName> = {
     crdt: "set";
     jsType: T;
     initial?: JsTypeValue<T>[];
-    key?: (value: JsTypeValue<T>) => string;
+    key?: KeyFn<JsTypeValue<T>>;
 };
 export type MapSchema<T extends JsTypeName = JsTypeName> = {
     crdt: "map";
@@ -98,8 +101,8 @@ export type ResetState = {
     newDocId: string;
     reason?: string;
 };
-export type DacumentChangeEvent = {
-    type: "change";
+export type DacumentDeltaEvent = {
+    type: "delta";
     ops: SignedOp[];
 };
 export type DacumentMergeEvent = {
@@ -129,7 +132,7 @@ export type DacumentResetEvent = {
     reason?: string;
 };
 export type DacumentEventMap = {
-    change: DacumentChangeEvent;
+    delta: DacumentDeltaEvent;
     merge: DacumentMergeEvent;
     error: DacumentErrorEvent;
     revoked: DacumentRevokedEvent;
@@ -219,7 +222,9 @@ export type MapView<V> = {
 export type RecordView<T> = Record<string, T> & {};
 export type FieldValue<F extends FieldSchema> = F["crdt"] extends "register" ? JsTypeValue<F["jsType"]> : F["crdt"] extends "text" ? TextView : F["crdt"] extends "array" ? ArrayView<JsTypeValue<F["jsType"]>> : F["crdt"] extends "set" ? SetView<JsTypeValue<F["jsType"]>> : F["crdt"] extends "map" ? MapView<JsTypeValue<F["jsType"]>> : F["crdt"] extends "record" ? RecordView<JsTypeValue<F["jsType"]>> : never;
 export type DocFieldAccess<S extends SchemaDefinition> = {
-    [K in keyof S]: FieldValue<S[K]>;
+    [K in keyof S as S[K]["crdt"] extends "register" ? K : never]: FieldValue<S[K]>;
+} & {
+    readonly [K in keyof S as S[K]["crdt"] extends "register" ? never : K]: FieldValue<S[K]>;
 };
 export declare function isJsValue(value: unknown): value is JsValue;
 export declare function isValueOfType(value: unknown, jsType: JsTypeName): boolean;
@@ -256,3 +261,4 @@ export declare function record<T extends JsTypeName>(options: {
     jsType: T;
     initial?: Record<string, JsTypeValue<T>>;
 }): RecordSchema<T>;
+export {};

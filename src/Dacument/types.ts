@@ -71,18 +71,22 @@ export type TextSchema = {
   initial?: string;
 };
 
+type KeyFn<T> = {
+  bivarianceHack(value: T): string;
+}["bivarianceHack"];
+
 export type ArraySchema<T extends JsTypeName = JsTypeName> = {
   crdt: "array";
   jsType: T;
   initial?: JsTypeValue<T>[];
-  key?: (value: JsTypeValue<T>) => string;
+  key?: KeyFn<JsTypeValue<T>>;
 };
 
 export type SetSchema<T extends JsTypeName = JsTypeName> = {
   crdt: "set";
   jsType: T;
   initial?: JsTypeValue<T>[];
-  key?: (value: JsTypeValue<T>) => string;
+  key?: KeyFn<JsTypeValue<T>>;
 };
 
 export type MapSchema<T extends JsTypeName = JsTypeName> = {
@@ -149,8 +153,8 @@ export type ResetState = {
   reason?: string;
 };
 
-export type DacumentChangeEvent = {
-  type: "change";
+export type DacumentDeltaEvent = {
+  type: "delta";
   ops: SignedOp[];
 };
 
@@ -185,7 +189,7 @@ export type DacumentResetEvent = {
 };
 
 export type DacumentEventMap = {
-  change: DacumentChangeEvent;
+  delta: DacumentDeltaEvent;
   merge: DacumentMergeEvent;
   error: DacumentErrorEvent;
   revoked: DacumentRevokedEvent;
@@ -308,9 +312,16 @@ export type FieldValue<F extends FieldSchema> = F["crdt"] extends "register"
   ? RecordView<JsTypeValue<F["jsType"]>>
   : never;
 
-export type DocFieldAccess<S extends SchemaDefinition> = {
-  [K in keyof S]: FieldValue<S[K]>;
-};
+export type DocFieldAccess<S extends SchemaDefinition> =
+  {
+    [K in keyof S as S[K]["crdt"] extends "register" ? K : never]: FieldValue<
+      S[K]
+    >;
+  } & {
+    readonly [K in keyof S as S[K]["crdt"] extends "register" ? never : K]: FieldValue<
+      S[K]
+    >;
+  };
 
 export function isJsValue(value: unknown): value is JsValue {
   if (value === null) return true;
@@ -379,7 +390,7 @@ export function array<T extends JsTypeName>(options: {
     crdt: "array",
     jsType: options.jsType,
     initial: options.initial ?? [],
-    key: options.key as (value: JsTypeValue<T>) => string,
+    key: options.key as KeyFn<JsTypeValue<T>>,
   };
 }
 
@@ -392,7 +403,7 @@ export function set<T extends JsTypeName>(options: {
     crdt: "set",
     jsType: options.jsType,
     initial: options.initial ?? [],
-    key: options.key as (value: JsTypeValue<T>) => string,
+    key: options.key as KeyFn<JsTypeValue<T>>,
   };
 }
 

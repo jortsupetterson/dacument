@@ -1,6 +1,6 @@
 {
   "name": "dacument",
-  "version": "1.2.2",
+  "version": "2.0.0",
   "description": "Schema-driven CRDT document with signed ops, role-based ACLs, and per-actor auditability.",
   "keywords": [
     "crdt",
@@ -19,9 +19,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.js",
+    "test:types": "tsc -p tsconfig.types.json",
+    "test:playwright": "npm run build && playwright test",
     "bench": "npm run build && node bench/index.js",
     "sim": "npm run build && node bench/dacument.sim.js",
-    "verify": "npm run test && npm run bench && npm run sim"
+    "verify": "npm run test && npm run test:types && npm run test:playwright && npm run bench && npm run sim"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -56,6 +58,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.0.3",
+    "playwright": "^1.57.0",
     "typescript": "^5.9.3"
   }
 }

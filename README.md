@@ -52,7 +52,7 @@ doc.tags.add("draft");
 doc.items.push("milk");
 
 // Wire ops to your transport.
-doc.addEventListener("change", (event) => channel.send(event.ops));
+doc.addEventListener("delta", (event) => channel.send(event.ops));
 channel.onmessage = (ops) => doc.merge(ops);
 
 doc.addEventListener("merge", ({ actor, target, method, data }) => {
@@ -118,10 +118,10 @@ in the snapshot and never rotated.
 
 ## Networking and sync
 
-Use `change` events to relay signed ops, and `merge` to apply them:
+Use `delta` events to relay signed ops, and `merge` to apply them:
 
 ```ts
-doc.addEventListener("change", (event) => send(event.ops));
+doc.addEventListener("delta", (event) => send(event.ops));
 
 // on remote
 await peer.merge(ops);
@@ -154,7 +154,7 @@ Snapshots do not include the schema or schema ids; callers must supply the schem
 
 ## Events and values
 
-- `doc.addEventListener("change", handler)` emits ops for network sync
+- `doc.addEventListener("delta", handler)` emits ops for network sync
   (writer ops are role-signed; acks are actor-signed by non-revoked actors and
   verified against ACL-pinned actor public keys).
 - `doc.addEventListener("merge", handler)` emits `{ actor, target, method, data }`.
@@ -215,7 +215,7 @@ If any non-revoked actor is offline and never acks, tombstones are kept.
 - Snapshots may include ops that are rejected; invalid ops are ignored on load.
 
 Eventual consistency is achieved when all signed ops are delivered to all
-replicas. Dacument does not provide transport; use `change` events to wire it up.
+replicas. Dacument does not provide transport; use `delta` events to wire it up.
 
 ## Possible threats and how to handle
 
@@ -239,9 +239,11 @@ replicas. Dacument does not provide transport; use `change` events to wire it up
 ## Scripts
 
 - `npm test` runs the test suite (build included).
+- `npm run test:types` runs compile-time inference checks.
+- `npm run test:playwright` runs browser/unit/integration/e2e coverage via Playwright.
 - `npm run bench` runs all CRDT micro-benchmarks (build included).
 - `npm run sim` runs a worker-thread stress simulation.
-- `npm run verify` runs tests, benchmarks, and the simulation in one go.
+- `npm run verify` runs tests (including type + Playwright), benchmarks, and the simulation in one go.
 
 ## Benchmarks
 

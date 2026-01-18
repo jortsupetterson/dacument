@@ -123,7 +123,7 @@ async function createOwnerDoc() {
 test("create enforces schema and register behavior", async () => {
   const { doc } = await createOwnerDoc();
   const ops = [];
-  doc.addEventListener("change", (event) => ops.push(...event.ops));
+  doc.addEventListener("delta", (event) => ops.push(...event.ops));
 
   doc.title = "hello";
   await doc.flush();
@@ -147,7 +147,7 @@ test("create enforces schema and register behavior", async () => {
 test("merge accepts editor register ops", async () => {
   const { doc, roleKeys } = await createOwnerDoc();
   const ops = [];
-  doc.addEventListener("change", (event) => ops.push(...event.ops));
+  doc.addEventListener("delta", (event) => ops.push(...event.ops));
 
   const editorId = generateNonce();
   doc.acl.setRole(editorId, "editor");
@@ -213,14 +213,14 @@ test("viewer acks are actor-signed", async () => {
 test("writer acks are actor-signed", async () => {
   const { doc } = await createOwnerDoc();
   const ops = [];
-  doc.addEventListener("change", (event) => ops.push(...event.ops));
+  doc.addEventListener("delta", (event) => ops.push(...event.ops));
 
   doc.title = "alpha";
   await doc.flush();
-  const changeOps = ops.slice();
+  const deltaOps = ops.slice();
   ops.length = 0;
 
-  await doc.merge(changeOps);
+  await doc.merge(deltaOps);
   await new Promise((resolve) => setTimeout(resolve, 0));
   await doc.flush();
 
@@ -261,7 +261,7 @@ test("role-signed acks are rejected", async () => {
 test("acl roles gate writes by stamp", async () => {
   const { doc, roleKeys } = await createOwnerDoc();
   const ownerOps = [];
-  doc.addEventListener("change", (event) => ownerOps.push(...event.ops));
+  doc.addEventListener("delta", (event) => ownerOps.push(...event.ops));
 
   const bobId = generateNonce();
   doc.acl.setRole(bobId, "editor");
@@ -312,7 +312,7 @@ test("acl roles gate writes by stamp", async () => {
 test("revoked reads return initial values", async () => {
   const { doc } = await createOwnerDoc();
   const ownerOps = [];
-  doc.addEventListener("change", (event) => ownerOps.push(...event.ops));
+  doc.addEventListener("delta", (event) => ownerOps.push(...event.ops));
 
   doc.title = "alpha";
   doc.body.insertAt(0, "h");
@@ -321,9 +321,9 @@ test("revoked reads return initial values", async () => {
   doc.meta.note = "ok";
   await doc.flush();
 
-  const changeOps = ownerOps.slice();
+  const deltaOps = ownerOps.slice();
   ownerOps.length = 0;
-  await doc.merge(changeOps);
+  await doc.merge(deltaOps);
 
   assert.equal(doc.title, "alpha");
   assert.equal(doc.body.toString(), "h");
@@ -348,7 +348,7 @@ test("revoked reads return initial values", async () => {
 test("managers cannot grant manager role", async () => {
   const { doc, roleKeys } = await createOwnerDoc();
   const ownerOps = [];
-  doc.addEventListener("change", (event) => ownerOps.push(...event.ops));
+  doc.addEventListener("delta", (event) => ownerOps.push(...event.ops));
 
   const managerId = generateNonce();
   doc.acl.setRole(managerId, "manager");
@@ -377,7 +377,7 @@ test("managers cannot grant manager role", async () => {
 test("managers cannot revoke owner", async () => {
   const { doc, roleKeys } = await createOwnerDoc();
   const ownerOps = [];
-  doc.addEventListener("change", (event) => ownerOps.push(...event.ops));
+  doc.addEventListener("delta", (event) => ownerOps.push(...event.ops));
 
   const managerId = generateNonce();
   doc.acl.setRole(managerId, "manager");
@@ -405,7 +405,7 @@ test("managers cannot revoke owner", async () => {
 test("invalid signature is rejected", async () => {
   const { doc, snapshot } = await createOwnerDoc();
   const ops = [];
-  doc.addEventListener("change", (event) => ops.push(...event.ops));
+  doc.addEventListener("delta", (event) => ops.push(...event.ops));
   doc.title = "alpha";
   await doc.flush();
 
@@ -426,7 +426,7 @@ test("invalid signature is rejected", async () => {
 test("corrupt snapshot ops are ignored", async () => {
   const { doc, roleKeys, ownerId } = await createOwnerDoc();
   const ops = [];
-  doc.addEventListener("change", (event) => ops.push(...event.ops));
+  doc.addEventListener("delta", (event) => ops.push(...event.ops));
   doc.title = "alpha";
   await doc.flush();
   await doc.merge(ops);
@@ -526,7 +526,7 @@ test("auto-attaches actor public key once", async () => {
     roleKeys: snapshot.roleKeys,
   });
   const ops = [];
-  doc.addEventListener("change", (event) => ops.push(...event.ops));
+  doc.addEventListener("delta", (event) => ops.push(...event.ops));
   await doc.merge(snapshot.ops);
   await doc.flush();
 
@@ -556,7 +556,7 @@ test("auto-attaches actor public key once", async () => {
 test("selfRevoke works for viewer", async () => {
   const { doc } = await createOwnerDoc();
   const ops = [];
-  doc.addEventListener("change", (event) => ops.push(...event.ops));
+  doc.addEventListener("delta", (event) => ops.push(...event.ops));
 
   doc.acl.setRole(ACTOR_ID, "viewer");
   await doc.flush();
@@ -653,7 +653,7 @@ test("verifyActorIntegrity detects impersonation", async () => {
 test("accessReset materializes state and returns new keys", async () => {
   const { doc, roleKeys } = await createOwnerDoc();
   const ops = [];
-  doc.addEventListener("change", (event) => ops.push(...event.ops));
+  doc.addEventListener("delta", (event) => ops.push(...event.ops));
 
   doc.title = "alpha";
   doc.body.insertAt(0, "h");
@@ -697,7 +697,7 @@ test("reset emits event and blocks writes", async () => {
 test("accessReset requires owner role", async () => {
   const { doc } = await createOwnerDoc();
   const ops = [];
-  doc.addEventListener("change", (event) => ops.push(...event.ops));
+  doc.addEventListener("delta", (event) => ops.push(...event.ops));
 
   doc.acl.setRole(ACTOR_ID, "viewer");
   await doc.flush();
