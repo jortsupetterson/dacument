@@ -85,7 +85,7 @@ Before considering work “done”, ensure:
 ## 8. Documentation & Changelog
 
 - Update documentation when behavior changes.
-- Add entries to `CHANNELLOG.md` for meaningful changes.
+- Add entries to `CHANGELOG.md` for meaningful changes.
 - Follow semantic versioning expectations.
 
 **Rationale:** Users rely on documented guarantees.
