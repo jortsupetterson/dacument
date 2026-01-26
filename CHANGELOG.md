@@ -1,4 +1,4 @@
-# Channel Log
+# Change Log
 
 ## 2.0.0
 
